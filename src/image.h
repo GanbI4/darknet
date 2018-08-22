@@ -52,7 +52,9 @@ void show_image_normalized(image im, const char *name);
 void show_images(image *ims, int n, char *window);
 void show_image_layers(image p, char *name);
 void show_image_collapsed(image p, char *name);
-
+#ifdef NUMPY
+image ndarray_to_image(unsigned char* src, long* shape, long* strides);
+#endif
 void print_image(image m);
 
 image make_empty_image(int w, int h, int c);
