@@ -48,8 +48,8 @@ class METADATA(Structure):
     
 
 #lib = CDLL("/home/pjreddie/documents/darknet/libdarknet.so", RTLD_GLOBAL)
-#lib = CDLL("/home/anyvision/projects/face/azyolo/libdarknet.so", RTLD_GLOBAL)
-lib = CDLL("/root/azyolo/libdarknet.so", RTLD_GLOBAL)
+lib = CDLL("/home/anyvision/projects/face/azyolo/libdarknet_cpu.so", RTLD_GLOBAL)
+#lib = CDLL("/root/azyolo/libdarknet.so", RTLD_GLOBAL)
 lib.network_width.argtypes = [c_void_p]
 lib.network_width.restype = c_int
 lib.network_height.argtypes = [c_void_p]
@@ -158,21 +158,41 @@ def detect(net, meta, image, thresh=.5, hier_thresh=.5, nms=.45):
     return res
 
 def detect_np(net, meta, np_img, thresh=.5, hier_thresh=.5, nms=.45):
+    start_time = time.time()
     im = nparray_to_image(np_img)
+    end_time = time.time()
+    print "Elapsed cv2img Time: %f" % (end_time - start_time)
+
     num = c_int(0)
     pnum = pointer(num)
-    predict_image(net, im)
-    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
-    num = pnum[0]
-    if (nms): do_nms_obj(dets, num, meta.classes, nms);
 
+    start_time = time.time()
+    predict_image(net, im)
+    end_time = time.time()
+    print "Elapsed predict Time: %f" % (end_time - start_time)
+
+    start_time = time.time()
+    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
+    end_time = time.time()
+    print "Elapsed get bxs Time: %f" % (end_time - start_time)
+
+    num = pnum[0]
+
+    start_time = time.time()
+    if (nms): do_nms_obj(dets, num, meta.classes, nms);
+    end_time = time.time()
+    print "Elapsed nms Time: %f" % (end_time - start_time)
+
+    start_time = time.time()
     res = []
     for j in range(num):
         for i in range(meta.classes):
             if dets[j].prob[i] > 0:
                 b = dets[j].bbox
                 res.append((meta.names[i], dets[j].prob[i], (b.x, b.y, b.w, b.h)))
-    res = sorted(res, key=lambda x: -x[1])
+    #res = sorted(res, key=lambda x: -x[1])
+    end_time = time.time()
+    print "Elapsed python stuff Time: %f" % (end_time - start_time)
     free_image(im)
     free_detections(dets, num)
     return res
@@ -198,6 +218,7 @@ if __name__ == "__main__":
     weights = args.weights
     dataf = args.data
     source = args.input
+    frame_count = 0
 
     try:
         int(source)
@@ -213,19 +234,54 @@ if __name__ == "__main__":
 
     net = load_net(cfg, weights, 0)
     meta = load_meta(dataf)
+    total_els = 0
+
+    detect_each_frame = 6
 
     while (1):
+        print "###############################################"
         ret, image = cap.read()
-        #image = cv2.resize(image, (0,0), fx=0.75, fy=0.75)
+        src_img = image
+        #image = cv2.resize(image, (1280,720))
+        #image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         start_time = time.time()
-        r = detect_np(net, meta, image)
+        scalor = 2
+        ratio = 1.0 / scalor
+        print ratio
+        image = cv2.resize(src_img, (0,0), fx=ratio, fy=ratio)
         end_time = time.time()
-        print "Elapsed Time: %f" % (end_time - start_time)
+        print "Elapsed cv resize Time: %f" % (end_time - start_time)
+        
+        start_time = time.time()
+        if frame_count % detect_each_frame == 0:
+            r = detect_np(net, meta, image)
+            trackers = cv2.MultiTracker_create()
+            print "USING DETECTOR"
+        else:
+            print "USING TRACKER"
+            success, tr_boxes = trackers.update(image)
 
-        for cat, score, bounds in r:
-            x, y, w, h = bounds
-            cv2.rectangle(image, (int(x-w/2),int(y-h/2)),(int(x+w/2),int(y+h/2)),(255,0,255), 5)
+        end_time = time.time()
+        elapsed = end_time - start_time
+        total_els += elapsed
+        print "Elapsed Total Time: %f" % (elapsed)
 
-        cv2.imshow("test", image)
+        print "###############################################"
+
+        if frame_count % detect_each_frame == 0:
+            for cat, score, bounds in r:
+                x, y, w, h = bounds
+                print score
+                cv2.rectangle(src_img, (int(x-w/2) * scalor,int(y-h/2) * scalor),(int(x+w/2) * scalor,int(y+h/2) * scalor),(255,0,255), 5)
+                box = (int(x-w/2),int(y-h/2),int(w),int(h))
+                trackers.add(cv2.TrackerMOSSE_create(), image, box)
+        else:
+            for box in tr_boxes:
+                (x, y, w, h) = [int(v) * scalor for v in box]
+                cv2.rectangle(src_img, (x, y), (x + w, y + h), (0, 255, 0), 5)
+
+        cv2.imshow("test", src_img)
         cv2.waitKey(1)
+        frame_count += 1
+        print "avg time to frame %f" % (total_els / frame_count)
 
